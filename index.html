@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Creative Set Uploader</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  :root{
+    --bg: #10131A;
+    --panel: #171B24;
+    --panel-2: #1D2230;
+    --line: #2A3040;
+    --text: #E7EAF0;
+    --muted: #8A93A6;
+    --accent: #5B8CFF;
+    --accent-dim: #33406B;
+    --good: #3FBE79;
+    --warn: #E0A93E;
+    --bad: #E0645C;
+    --mono: 'SF Mono', 'JetBrains Mono', Consolas, Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif;
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--sans); font-size:14px; line-height:1.5;
+  }
+  header{
+    padding:22px 28px 18px; border-bottom:1px solid var(--line);
+    display:flex; align-items:baseline; justify-content:space-between; gap:16px; flex-wrap:wrap;
+  }
+  header h1{ font-size:18px; margin:0; font-weight:600; letter-spacing:-.01em; }
+  header p{ margin:4px 0 0; color:var(--muted); font-size:13px; }
+  .layout{
+    display:grid; grid-template-columns: 340px 1fr; gap:0;
+    min-height:calc(100vh - 78px);
+  }
+  @media (max-width: 880px){ .layout{ grid-template-columns: 1fr; } }
+
+  .panel{ padding:24px; }
+  .set-panel{ border-right:1px solid var(--line); background:var(--panel); }
+
+  fieldset{ border:none; margin:0 0 22px; padding:0; }
+  legend{ font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin-bottom:10px; padding:0; }
+  .field{ margin-bottom:12px; }
+  .field label{ display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
+  .row2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  input, select{
+    width:100%; background:var(--panel-2); border:1px solid var(--line); color:var(--text);
+    padding:8px 10px; border-radius:6px; font-size:13px; font-family:var(--sans);
+  }
+  input:focus, select:focus{ outline:none; border-color:var(--accent); }
+  input[list]{ font-family:var(--mono); }
+  .hint{ font-size:11px; color:var(--muted); margin-top:3px; }
+
+  .content-panel{ padding:24px 28px; }
+
+  .dropzone{
+    border:1.5px dashed var(--line); border-radius:10px; padding:34px 20px;
+    text-align:center; color:var(--muted); cursor:pointer; transition:.15s border-color, .15s background;
+  }
+  .dropzone.drag{ border-color:var(--accent); background:rgba(91,140,255,0.06); color:var(--text); }
+  .dropzone strong{ color:var(--text); }
+  #fileInput{ display:none; }
+
+  table{ width:100%; border-collapse:collapse; margin-top:18px; }
+  th{ text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:500; padding:8px 10px; border-bottom:1px solid var(--line); }
+  td{ padding:10px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  tr:last-child td{ border-bottom:none; }
+  .file-cell{ display:flex; align-items:center; gap:10px; min-width:180px; }
+  .thumb{ width:34px; height:34px; border-radius:5px; object-fit:cover; background:var(--panel-2); flex-shrink:0; }
+  .thumb.video{ display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:16px; }
+  .fname{ font-size:12px; word-break:break-all; max-width:220px; }
+  .size-input{ width:84px; padding:3px 6px; font-size:11px; font-family:var(--mono); margin-top:4px; }
+  .dim{ font-size:11px; color:var(--muted); margin-top:2px; }
+  .dim.bad{ color:var(--warn); }
+  .tiny-input{ width:44px; padding:6px 7px; text-align:center; }
+  .var-pair{ display:flex; align-items:center; gap:4px; }
+  .badge{ display:inline-block; font-size:10.5px; padding:2px 7px; border-radius:20px; font-family:var(--mono); letter-spacing:.02em; }
+  .badge.static{ background:var(--accent-dim); color:#B9CBFF; }
+  .badge.video{ background:#3D2C57; color:#D4BFFF; }
+  .preview{ font-family:var(--mono); font-size:11.5px; color:var(--muted); line-height:1.6; }
+  .preview b{ color:var(--text); font-weight:500; }
+  .remove-btn{ background:none; border:none; color:var(--muted); cursor:pointer; font-size:16px; padding:2px 6px; }
+  .remove-btn:hover{ color:var(--bad); }
+
+  .actions{ display:flex; align-items:center; gap:14px; margin-top:22px; }
+  button.primary{
+    background:var(--accent); color:#0B0E14; border:none; font-weight:600;
+    padding:11px 20px; border-radius:7px; cursor:pointer; font-size:13.5px;
+  }
+  button.primary:disabled{ background:var(--accent-dim); color:var(--muted); cursor:not-allowed; }
+  button.primary:not(:disabled):hover{ filter:brightness(1.08); }
+  .status{ font-size:12.5px; color:var(--muted); }
+  .status.err{ color:var(--bad); }
+
+  .pad-color{ display:flex; align-items:center; gap:8px; }
+  .pad-color select{ flex:1; }
+  .size-options{ display:flex; flex-direction:column; gap:6px; }
+  .size-option{ display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text); cursor:pointer; }
+  .size-option input{ width:auto; margin:0; accent-color:var(--accent); cursor:pointer; }
+
+  #videoOutput{ margin-top:26px; display:none; }
+  #videoOutput h3{ font-size:13px; margin:0 0 6px; }
+  #videoOutput p{ color:var(--muted); font-size:12.5px; margin:0 0 12px; }
+  .cmd-box{
+    background:#0C0E13; border:1px solid var(--line); border-radius:7px; padding:12px 14px;
+    margin-bottom:10px; position:relative;
+  }
+  .cmd-box code{ font-family:var(--mono); font-size:11.5px; color:#B9F0C8; white-space:pre-wrap; word-break:break-all; display:block; padding-right:60px; }
+  .copy-btn{
+    position:absolute; top:10px; right:10px; background:var(--panel-2); border:1px solid var(--line);
+    color:var(--muted); font-size:11px; padding:4px 9px; border-radius:5px; cursor:pointer;
+  }
+  .copy-btn:hover{ color:var(--text); border-color:var(--accent); }
+  .copy-all{ margin-bottom:14px; }
+
+  .glossary-btn{
+    background:var(--panel-2); border:1px solid var(--line); color:var(--text);
+    padding:7px 14px; border-radius:7px; cursor:pointer; font-size:12.5px; font-weight:500;
+  }
+  .glossary-btn:hover{ border-color:var(--accent); }
+  .glossary-link{
+    background:none; border:none; color:var(--accent); font-size:11px; cursor:pointer;
+    padding:2px 0 0; text-decoration:underline; display:block;
+  }
+
+  .modal-overlay{
+    position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000;
+    display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .modal-box{
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    width:min(720px, 100%); max-height:85vh; overflow-y:auto;
+  }
+  .modal-header{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:18px 22px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--panel);
+  }
+  .modal-header h2{ font-size:16px; margin:0; }
+  .modal-close{ background:none; border:none; color:var(--muted); font-size:20px; cursor:pointer; line-height:1; }
+  .modal-close:hover{ color:var(--text); }
+  .modal-body{ padding:18px 22px 26px; }
+  .modal-body h3{ font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:22px 0 8px; }
+  .modal-body h3:first-of-type{ margin-top:0; }
+  #glossary-status.bad{ color: var(--warn); }
+  .glossary-table{ width:100%; border-collapse:collapse; font-size:12.5px; margin-bottom:4px; }
+  .glossary-table th{ text-align:left; color:var(--muted); font-weight:500; padding:6px 8px; border-bottom:1px solid var(--line); font-size:10.5px; text-transform:uppercase; letter-spacing:.03em; }
+  .glossary-table td{ padding:6px 8px; border-bottom:1px solid var(--line); }
+  .glossary-table td:first-child{ font-family:var(--mono); color:var(--accent); white-space:nowrap; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Creative Set Uploader</h1>
+    <p>Fill in the set once. Drop in every variant. Get correctly-named, correctly-sized files back — images and video both, automatically.</p>
+  </div>
+  <div style="display:flex; align-items:center; gap:12px;">
+    <button type="button" class="glossary-btn" id="openGlossary">📖 Glossary</button>
+    <div class="status" id="globalStatus"></div>
+  </div>
+</header>
+
+<div class="layout">
+
+  <div class="panel set-panel">
+    <fieldset>
+      <legend>Set details</legend>
+      <div class="field">
+        <label for="f-date">Export date</label>
+        <input type="date" id="f-date">
+        <div class="hint">Defaults to the Friday of the current week — edit if needed.</div>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="f-app">App ID</label>
+          <input type="text" id="f-app" list="app-list" placeholder="e.g. BL">
+          <datalist id="app-list"></datalist>
+          <button type="button" class="glossary-link" id="appGlossaryLink">See all apps &amp; IDs</button>
+        </div>
+        <div class="field">
+          <label for="f-pkg">Creative package #</label>
+          <input type="text" id="f-pkg" placeholder="e.g. 318">
+        </div>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="f-concept">Concept ID (H##)</label>
+          <input type="text" id="f-concept" placeholder="e.g. 5">
+          <button type="button" class="glossary-link" id="conceptGlossaryLink">See concept IDs for this app</button>
+        </div>
+        <div class="field">
+          <label for="f-feature">Feature ID (F##)</label>
+          <input type="text" id="f-feature" placeholder="e.g. 7">
+          <button type="button" class="glossary-link" id="featureGlossaryLink">See feature IDs for this app</button>
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Language &amp; sourcing</legend>
+      <div class="row2">
+        <div class="field">
+          <label for="f-lang">Language</label>
+          <select id="f-lang">
+            <option>EN</option><option>ES</option><option>PT</option><option>FR</option><option>DE</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="f-ai">AI / Non-AI</label>
+          <select id="f-ai">
+            <option value="AI">AI</option>
+            <option value="NAI">Non-AI</option>
+            <option value="HYB">Hybrid</option>
+          </select>
+        </div>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="f-producer">Creative producer (initials)</label>
+          <input type="text" id="f-producer" maxlength="3" placeholder="e.g. RP">
+        </div>
+        <div class="field">
+          <label for="f-designer">Designer (initials)</label>
+          <input type="text" id="f-designer" maxlength="3" placeholder="e.g. BZ">
+        </div>
+      </div>
+      <div class="field">
+        <label for="f-extra">Extra code (optional)</label>
+        <input type="text" id="f-extra" placeholder="e.g. RWRK — leave blank if none">
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Resize settings</legend>
+      <div class="field">
+        <label>Output sizes</label>
+        <div class="size-options">
+          <label class="size-option"><input type="checkbox" class="size-checkbox" value="1080x1350" checked> 1080×1350</label>
+          <label class="size-option"><input type="checkbox" class="size-checkbox" value="1080x1080"> 1080×1080</label>
+          <label class="size-option"><input type="checkbox" class="size-checkbox" value="1920x1080"> 1920×1080</label>
+        </div>
+        <div class="hint">The original size is always included. Pick any additional sizes to generate alongside it.</div>
+      </div>
+      <div class="field">
+        <label for="f-padcolor">Pad color</label>
+        <select id="f-padcolor">
+          <option value="#000000">Black</option>
+          <option value="#FFFFFF">White</option>
+        </select>
+        <div class="hint">Applies to both the in-browser image resize and the ffmpeg command generated for video.</div>
+      </div>
+    </fieldset>
+  </div>
+
+  <div class="panel content-panel">
+    <div class="dropzone" id="dropzone">
+      <div><strong>Drop creative variants here</strong> or click to browse</div>
+      <div class="hint" style="margin-top:6px;">Accepts images and videos. Each file becomes one row — assign its variation letter and iteration.</div>
+    </div>
+    <input type="file" id="fileInput" multiple accept="image/*,video/*">
+
+    <table id="fileTable" style="display:none;">
+      <thead>
+        <tr>
+          <th>File</th>
+          <th>Variant</th>
+          <th>Type</th>
+          <th>Output filenames</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="fileRows"></tbody>
+    </table>
+
+    <div class="actions">
+      <button class="primary" id="generateBtn" disabled>Generate &amp; download set</button>
+      <span class="status" id="genStatus"></span>
+    </div>
+
+    <div id="videoOutput">
+      <h3>Some videos couldn't auto-resize — fallback commands</h3>
+      <p>The browser-based resize failed for the video(s) above (usually a codec it doesn't support). These use <code>ffmpeg</code> — install once with <code>winget install ffmpeg</code> (Windows) or <code>brew install ffmpeg</code> (Mac), then run <code>resize_videos.bat</code> (Windows) or <code>resize_videos.sh</code> (Mac/Linux) from the folder holding your source videos. Output filenames already match convention.</p>
+      <button class="copy-btn copy-all" id="copyAllCmds">Copy all commands</button>
+      <div id="cmdList"></div>
+    </div>
+  </div>
+
+</div>
+
+<div class="modal-overlay" id="glossaryModal" style="display:none;">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2>Naming Glossary</h2>
+      <button type="button" class="modal-close" id="closeGlossary">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="glossary-status" class="hint" style="margin-bottom:12px;"></div>
+      <div class="field">
+        <label for="glossary-app-select">Browse by app</label>
+        <select id="glossary-app-select"></select>
+      </div>
+
+      <h3>Concept IDs (H##)</h3>
+      <div class="hint" style="margin-bottom:8px;">H01 = Wild Ideas — always available for any app. Use it until a concept proves itself (2+ creative wins), then it can graduate to its own ID.</div>
+      <table class="glossary-table" id="glossary-concept-table"></table>
+
+      <h3>Feature IDs (F##)</h3>
+      <table class="glossary-table" id="glossary-feature-table"></table>
+
+      <h3>All apps</h3>
+      <table class="glossary-table" id="glossary-app-table"></table>
+
+      <h3>Creative producers (CP)</h3>
+      <table class="glossary-table" id="glossary-producer-table"></table>
+
+      <h3>Designers (MD)</h3>
+      <table class="glossary-table" id="glossary-designer-table"></table>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---- Naming glossary: live data from a connected Google Sheet (published as CSV) ----
+const GLOSSARY_URLS = {
+  apps: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSKqX1V2op9wAqoZbeG01piDMe8ImlMR6rkyAbCzEHA0tJ0v5o3HPK91OMe-DDXzXdz50gFyXXhPSUl/pub?gid=1995243484&single=true&output=csv',
+  concepts: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSKqX1V2op9wAqoZbeG01piDMe8ImlMR6rkyAbCzEHA0tJ0v5o3HPK91OMe-DDXzXdz50gFyXXhPSUl/pub?gid=1455136722&single=true&output=csv',
+  features: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSKqX1V2op9wAqoZbeG01piDMe8ImlMR6rkyAbCzEHA0tJ0v5o3HPK91OMe-DDXzXdz50gFyXXhPSUl/pub?gid=541589238&single=true&output=csv',
+  producers: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSKqX1V2op9wAqoZbeG01piDMe8ImlMR6rkyAbCzEHA0tJ0v5o3HPK91OMe-DDXzXdz50gFyXXhPSUl/pub?gid=1739253112&single=true&output=csv',
+  designers: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSKqX1V2op9wAqoZbeG01piDMe8ImlMR6rkyAbCzEHA0tJ0v5o3HPK91OMe-DDXzXdz50gFyXXhPSUl/pub?gid=1078315217&single=true&output=csv'
+};
+
+// Built-in snapshot used only if the live sheet can't be reached on first load.
+const FALLBACK_APPS = [
+  {id:'FL',name:'Flashlight Launcher',producer:'YE'},{id:'ACL',name:'AI Chat Launcher',producer:'SR'},
+  {id:'VCL',name:'Volume Control Launcher',producer:'SR'},{id:'CL',name:'Alarm Clock Launcher',producer:'AB'},
+  {id:'CCL',name:'Calculator Launcher',producer:'AB'},{id:'CAL',name:'Calendar Launcher',producer:'YE'},
+  {id:'NL',name:'Notes Launcher',producer:'AB'},{id:'BL',name:'Holy Bible Launcher',producer:'YE'},
+  {id:'HL',name:'Daily Horoscope Launcher',producer:'AB'},{id:'STL',name:'Step Tracker Launcher',producer:'AB'},
+  {id:'QBL',name:'QR & Barcode Scanner Launcher',producer:'YE'},{id:'WRL',name:'Weather Radar Launcher',producer:'SR'},
+  {id:'WN',name:'White Noise',producer:'AB'},{id:'DWR',name:'Drink Water Reminder',producer:'—'},
+  {id:'FMP',name:'Find My Phone',producer:'SR'},{id:'RL',name:'Universal TV Remote Launcher',producer:'—'},
+  {id:'BNL',name:'Breaking News Launcher',producer:'SR'},{id:'NWL',name:'NewsLauncher - AA - 2',producer:'SR'},
+  {id:'PVC',name:'Photo&Video Cleaner',producer:'AB'}
+];
+const FALLBACK_CONCEPT_IDS = { ALL: [['H01','Wild Ideas (always available for any app until a concept proves itself)']] };
+const FALLBACK_FEATURE_IDS = {};
+const FALLBACK_PRODUCERS = [['SR','Sanjana'],['AB','Anastasiia'],['RP','Rhea'],['AL','Alex'],['YE','Yury Eremin'],['MN','Company tool (A360)']];
+const FALLBACK_DESIGNERS = [['BZ','Biz Creative'],['RM','Riddhi\'s team (India)'],['SS','Sam\'s team (India)'],['MM','Mada'],['IK','Ivan Krasnoshchoka'],['EC','External Creators']];
+
+let APPS = [], CONCEPT_IDS = {}, FEATURE_IDS = {}, PRODUCERS = [], DESIGNERS = [];
+let glossaryLoaded = false, glossaryLoadError = false;
+
+function parseCsv(url){
+  return new Promise((resolve, reject) => {
+    Papa.parse(url, { download: true, header: true, skipEmptyLines: true,
+      complete: results => resolve(results.data),
+      error: err => reject(err)
+    });
+  });
+}
+
+async function loadGlossaryData(){
+  try {
+    const [appRows, conceptRows, featureRows, producerRows, designerRows] = await Promise.all([
+      parseCsv(GLOSSARY_URLS.apps), parseCsv(GLOSSARY_URLS.concepts), parseCsv(GLOSSARY_URLS.features),
+      parseCsv(GLOSSARY_URLS.producers), parseCsv(GLOSSARY_URLS.designers)
+    ]);
+
+    APPS = appRows.filter(r => r['App ID']).map(r => ({
+      id: r['App ID'].trim(), name: (r['App Name'] || '').trim(), producer: (r['Creative Producer'] || '').trim() || '—'
+    }));
+
+    const newConcepts = {};
+    conceptRows.forEach(r => {
+      const appId = (r['App ID'] || '').trim(), cid = (r['Concept ID'] || '').trim(), desc = (r['Concept Description'] || '').trim();
+      if (!appId || !cid) return;
+      (newConcepts[appId] = newConcepts[appId] || []).push([cid, desc]);
+    });
+    CONCEPT_IDS = newConcepts;
+
+    const newFeatures = {};
+    featureRows.forEach(r => {
+      const appId = (r['App ID'] || '').trim(), fid = (r['Feature ID'] || '').trim(), desc = (r['Feature Description'] || '').trim();
+      if (!appId || !fid) return;
+      (newFeatures[appId] = newFeatures[appId] || []).push([fid, desc]);
+    });
+    FEATURE_IDS = newFeatures;
+
+    PRODUCERS = producerRows.filter(r => r['Code']).map(r => [r['Code'].trim(), (r['Name'] || '—').trim()]);
+    DESIGNERS = designerRows.filter(r => r['Code']).map(r => [r['Code'].trim(), (r['Name/Team'] || '—').trim()]);
+
+    glossaryLoaded = true;
+    glossaryLoadError = false;
+  } catch (err){
+    console.error('Glossary sheet fetch failed:', err);
+    glossaryLoadError = true;
+    if (!glossaryLoaded){ // nothing has ever loaded successfully — fall back to the built-in snapshot
+      APPS = FALLBACK_APPS; CONCEPT_IDS = FALLBACK_CONCEPT_IDS; FEATURE_IDS = FALLBACK_FEATURE_IDS;
+      PRODUCERS = FALLBACK_PRODUCERS; DESIGNERS = FALLBACK_DESIGNERS;
+    }
+  }
+  const list = $('app-list');
+  if (list) list.innerHTML = APPS.map(a => `<option value="${a.id}">`).join('');
+}
+
+const state = { files: [] }; // {id, file, kind, ext, width, height, letter, iter, mediaType, duration, thumbURL}
+let nextId = 1;
+
+const $ = (id) => document.getElementById(id);
+
+// ---- Glossary modal ----
+function renderGlossaryAppSelect(){
+  const sel = $('glossary-app-select');
+  sel.innerHTML = APPS.map(a => `<option value="${a.id}">${a.name} (${a.id})</option>`).join('');
+}
+
+function glossaryRows(rows){
+  return rows.map(([id, desc]) => `<tr><td>${id}</td><td>${desc}</td></tr>`).join('');
+}
+
+function renderGlossaryTables(appId){
+  const universal = CONCEPT_IDS['ALL'] || [['H01', 'Wild Ideas (always available for any app)']];
+  const concept = universal.concat(CONCEPT_IDS[appId] || []);
+  const feature = FEATURE_IDS[appId] || [];
+  $('glossary-concept-table').innerHTML = '<tr><th>ID</th><th>Concept</th></tr>' + glossaryRows(concept);
+  $('glossary-feature-table').innerHTML = '<tr><th>ID</th><th>Feature</th></tr>' +
+    (feature.length ? glossaryRows(feature) : '<tr><td colspan="2">No feature IDs listed yet for this app.</td></tr>');
+}
+
+function renderGlossaryStatic(){
+  $('glossary-app-table').innerHTML = '<tr><th>App</th><th>ID</th><th>Producer</th></tr>' +
+    APPS.map(a => `<tr><td>${a.id}</td><td>${a.name}</td><td>${a.producer}</td></tr>`).join('');
+  $('glossary-producer-table').innerHTML = '<tr><th>Code</th><th>Name</th></tr>' + glossaryRows(PRODUCERS);
+  $('glossary-designer-table').innerHTML = '<tr><th>Code</th><th>Name/Team</th></tr>' + glossaryRows(DESIGNERS);
+}
+
+function renderGlossaryAll(){
+  renderGlossaryAppSelect();
+  const currentApp = ($('f-app').value || '').trim().toUpperCase();
+  $('glossary-app-select').value = APPS.some(a => a.id === currentApp) ? currentApp : (APPS[0] ? APPS[0].id : '');
+  renderGlossaryTables($('glossary-app-select').value);
+  renderGlossaryStatic();
+}
+
+async function openGlossary(){
+  $('glossaryModal').style.display = 'flex';
+  // show whatever we already have immediately, then refresh from the live sheet
+  if (glossaryLoaded || APPS.length) renderGlossaryAll();
+  const statusEl = $('glossary-status');
+  statusEl.textContent = 'Checking the glossary sheet for updates…';
+  statusEl.classList.remove('bad');
+  await loadGlossaryData();
+  if (glossaryLoadError){
+    statusEl.textContent = 'Could not reach the live sheet just now — showing the last data that loaded successfully.';
+    statusEl.classList.add('bad');
+  } else {
+    statusEl.textContent = '';
+  }
+  renderGlossaryAll();
+}
+
+$('openGlossary').addEventListener('click', openGlossary);
+$('appGlossaryLink').addEventListener('click', openGlossary);
+$('conceptGlossaryLink').addEventListener('click', openGlossary);
+$('featureGlossaryLink').addEventListener('click', openGlossary);
+$('closeGlossary').addEventListener('click', () => { $('glossaryModal').style.display = 'none'; });
+$('glossaryModal').addEventListener('click', e => { if (e.target.id === 'glossaryModal') $('glossaryModal').style.display = 'none'; });
+$('glossary-app-select').addEventListener('change', e => renderGlossaryTables(e.target.value));
+
+// Load the live glossary in the background as soon as the page opens, so the
+// App ID autocomplete is ready even before anyone opens the glossary modal.
+loadGlossaryData();
+
+function fridayOfWeek(d){
+  const day = d.getDay(); // 0=Sun..6=Sat
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  const monday = new Date(d);
+  monday.setDate(d.getDate() + diffToMonday);
+  const friday = new Date(monday);
+  friday.setDate(monday.getDate() + 4);
+  return friday;
+}
+function toISODate(d){
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+$('f-date').value = toISODate(fridayOfWeek(new Date()));
+
+function pad2(n){ n = parseInt(n,10); if (isNaN(n)) n = 0; return n.toString().padStart(2,'0'); }
+function onlyDigits(v){ return (v||'').replace(/\D/g,''); }
+
+function setFields(){
+  const [y,m,d] = $('f-date').value.split('-');
+  return {
+    mmddyy: (m||'01') + (d||'01') + (y||'2026').slice(2),
+    app: ($('f-app').value||'').trim().toUpperCase().replace(/\s+/g,''),
+    pkg: 'C' + onlyDigits($('f-pkg').value || '0'),
+    concept: 'H' + pad2(onlyDigits($('f-concept').value)),
+    feature: 'F' + pad2(onlyDigits($('f-feature').value)),
+    lang: $('f-lang').value,
+    ai: $('f-ai').value,
+    producer: ($('f-producer').value||'').trim().toUpperCase(),
+    designer: ($('f-designer').value||'').trim().toUpperCase(),
+    extra: ($('f-extra').value||'').trim().toUpperCase(),
+    padColor: $('f-padcolor').value
+  };
+}
+
+function buildFilename(sf, entry, adSize, ext){
+  const variant = entry.letter.toUpperCase() + entry.iter;
+  const mediaCode = entry.mediaType === 'S' ? 'S' : ('V' + pad2(entry.duration));
+  let parts = [sf.mmddyy, sf.app, sf.pkg, variant, sf.concept, sf.feature, adSize, mediaCode, sf.lang, sf.ai, sf.producer, sf.designer];
+  if (sf.extra) parts.push(sf.extra);
+  return parts.join('_') + '.' + ext;
+}
+
+function requiredFieldsOk(sf){
+  return sf.app && sf.producer && sf.designer && $('f-pkg').value;
+}
+
+function getSelectedSizes(){
+  return [...document.querySelectorAll('.size-checkbox:checked')].map(cb => {
+    const [w, h] = cb.value.split('x').map(Number);
+    return { label: cb.value, w, h };
+  });
+}
+
+function refreshRow(entry){
+  const sf = setFields();
+  const row = document.getElementById('row-' + entry.id);
+  if (!row) return;
+
+  const origSize = entry.sizeLabel || '1080x1920';
+  const origName = buildFilename(sf, entry, origSize, entry.ext);
+  const sizes = getSelectedSizes();
+
+  let html = '<b>' + origSize + ':</b> ' + origName;
+  if (sizes.length){
+    sizes.forEach(sz => {
+      const name = buildFilename(sf, entry, sz.label, entry.ext);
+      html += '<br><b>' + sz.label + ':</b> ' + name;
+    });
+  } else {
+    html += '<br><span style="color:var(--warn);">No additional sizes selected</span>';
+  }
+  row.querySelector('.preview').innerHTML = html;
+
+  const noteEl = row.querySelector('.size-note');
+  if (noteEl){
+    const detected = entry.width && entry.height ? (entry.width + 'x' + entry.height) : null;
+    if (!detected){
+      noteEl.textContent = 'Reading file…';
+      noteEl.classList.remove('bad');
+    } else if (detected !== origSize){
+      noteEl.textContent = `File is actually ${detected}`;
+      noteEl.classList.add('bad');
+    } else {
+      noteEl.textContent = 'Matches file';
+      noteEl.classList.remove('bad');
+    }
+  }
+}
+
+function refreshAll(){
+  state.files.forEach(refreshRow);
+  const sf = setFields();
+  $('generateBtn').disabled = !(requiredFieldsOk(sf) && state.files.length > 0);
+}
+
+function addFile(file){
+  const id = nextId++;
+  const isVideo = file.type.startsWith('video/');
+  const ext = file.name.split('.').pop().toLowerCase();
+  const entry = {
+    id, file, kind: isVideo ? 'video' : 'image', ext,
+    width: 0, height: 0,
+    sizeLabel: '1080x1920', // editable — assumed until/unless the person overrides or detection updates it
+    letter: 'A', iter: state.files.length + 1,
+    mediaType: isVideo ? 'V' : 'S', duration: 0,
+    thumbURL: null
+  };
+  state.files.push(entry);
+  renderRow(entry);
+
+  if (isVideo){
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    v.src = URL.createObjectURL(file);
+    v.onloadedmetadata = () => {
+      entry.width = v.videoWidth; entry.height = v.videoHeight;
+      entry.duration = Math.round(v.duration);
+      entry.sizeLabel = entry.width + 'x' + entry.height;
+      const sizeInput = document.querySelector('#row-' + id + ' .size-input');
+      if (sizeInput) sizeInput.value = entry.sizeLabel;
+      refreshRow(entry);
+      refreshAll();
+    };
+  } else {
+    const img = new Image();
+    img.onload = () => {
+      entry.width = img.naturalWidth; entry.height = img.naturalHeight;
+      entry.sizeLabel = entry.width + 'x' + entry.height;
+      entry.thumbURL = img.src;
+      const thumb = document.querySelector('#row-' + id + ' .thumb');
+      if (thumb && thumb.tagName === 'IMG') thumb.src = img.src;
+      const sizeInput = document.querySelector('#row-' + id + ' .size-input');
+      if (sizeInput) sizeInput.value = entry.sizeLabel;
+      refreshRow(entry);
+      refreshAll();
+    };
+    img.src = URL.createObjectURL(file);
+  }
+}
+
+function renderRow(entry){
+  $('fileTable').style.display = 'table';
+  const tr = document.createElement('tr');
+  tr.id = 'row-' + entry.id;
+
+  const thumbHTML = entry.kind === 'video'
+    ? '<div class="thumb video">▶</div>'
+    : '<img class="thumb" src="">';
+
+  tr.innerHTML = `
+    <td>
+      <div class="file-cell">
+        ${thumbHTML}
+        <div>
+          <div class="fname">${entry.file.name}</div>
+          <input class="size-input" value="${entry.sizeLabel}" placeholder="1080x1920">
+          <div class="dim size-note">Reading…</div>
+        </div>
+      </div>
+    </td>
+    <td>
+      <div class="var-pair">
+        <input class="tiny-input letter-input" value="${entry.letter}" maxlength="1">
+        <input class="tiny-input iter-input" type="number" min="1" value="${entry.iter}">
+      </div>
+      ${entry.kind === 'video' ? '<div class="hint" style="margin-top:6px;">dur (s): <input class="tiny-input dur-input" type="number" min="1" style="width:52px;" value="0"></div>' : ''}
+    </td>
+    <td><span class="badge ${entry.kind === 'video' ? 'video' : 'static'}">${entry.kind === 'video' ? 'VIDEO' : 'STATIC'}</span></td>
+    <td><div class="preview">…</div></td>
+    <td><button class="remove-btn" title="Remove">✕</button></td>
+  `;
+
+  tr.querySelector('.letter-input').addEventListener('input', e => { entry.letter = e.target.value.toUpperCase() || 'A'; refreshRow(entry); });
+  tr.querySelector('.iter-input').addEventListener('input', e => { entry.iter = e.target.value || '1'; refreshRow(entry); });
+  tr.querySelector('.size-input').addEventListener('input', e => {
+    entry.sizeLabel = e.target.value.trim().replace(/X/gi, 'x');
+    refreshRow(entry);
+  });
+  const durInput = tr.querySelector('.dur-input');
+  if (durInput) durInput.addEventListener('input', e => { entry.duration = parseInt(e.target.value,10) || 0; refreshRow(entry); });
+  tr.querySelector('.remove-btn').addEventListener('click', () => {
+    state.files = state.files.filter(f => f.id !== entry.id);
+    tr.remove();
+    if (state.files.length === 0) $('fileTable').style.display = 'none';
+    refreshAll();
+  });
+
+  $('fileRows').appendChild(tr);
+}
+
+// dropzone wiring
+const dz = $('dropzone');
+dz.addEventListener('click', () => $('fileInput').click());
+['dragenter','dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('drag'); }));
+['dragleave','drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('drag'); }));
+dz.addEventListener('drop', e => { [...e.dataTransfer.files].forEach(addFile); refreshAll(); });
+$('fileInput').addEventListener('change', e => { [...e.target.files].forEach(addFile); refreshAll(); e.target.value = ''; });
+
+// any set-field change re-renders filenames
+document.querySelectorAll('.set-panel input, .set-panel select').forEach(el => el.addEventListener('input', refreshAll));
+
+// ---- Image padding via canvas ----
+function padImageToCanvas(img, targetW, targetH, color){
+  const canvas = document.createElement('canvas');
+  canvas.width = targetW; canvas.height = targetH;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = color;
+  ctx.fillRect(0,0,targetW,targetH);
+  const scale = Math.min(targetW / img.width, targetH / img.height);
+  const w = img.width * scale, h = img.height * scale;
+  const x = (targetW - w) / 2, y = (targetH - h) / 2;
+  ctx.drawImage(img, x, y, w, h);
+  return canvas;
+}
+
+function canvasToBlob(canvas, mime){
+  return new Promise(resolve => canvas.toBlob(resolve, mime, 0.92));
+}
+
+// ---- In-browser video processing (ffmpeg.wasm v0.12, self-hosted alongside this page — no CDN worker issues) ----
+let ffmpegInstance = null;
+async function getFFmpeg(onProgress){
+  if (ffmpegInstance) return ffmpegInstance;
+  const { FFmpeg } = await import('./vendor/ffmpeg/index.js');
+  const { toBlobURL } = await import('./vendor/util/index.js');
+  if (onProgress) onProgress('Loading video engine (first video only, ~15-30s)…');
+  const instance = new FFmpeg();
+  const coreBase = './vendor/core';
+  await instance.load({
+    coreURL: await toBlobURL(`${coreBase}/ffmpeg-core.js`, 'text/javascript'),
+    wasmURL: await toBlobURL(`${coreBase}/ffmpeg-core.wasm`, 'application/wasm')
+  });
+  ffmpegInstance = instance;
+  return ffmpegInstance;
+}
+
+function buildFfmpegCmd(origName, padName, w, h, padColor){
+  return `ffmpeg -i "${origName}" -vf "scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=${padColor}" -c:a copy "${padName}"`;
+}
+
+// Writes the source video once, then renders every selected size from it before cleaning up.
+async function padVideoAllSizes(entry, sizes, padColor, onProgress){
+  const { fetchFile } = await import('./vendor/util/index.js');
+  const ffmpeg = await getFFmpeg(onProgress);
+  const inName = 'in_' + entry.id + '.' + entry.ext;
+  await ffmpeg.writeFile(inName, await fetchFile(entry.file));
+
+  const results = [];
+  for (const sz of sizes){
+    const outName = 'out_' + entry.id + '_' + sz.w + 'x' + sz.h + '.' + entry.ext;
+    try {
+      await ffmpeg.exec([
+        '-i', inName,
+        '-vf', `scale=${sz.w}:${sz.h}:force_original_aspect_ratio=decrease,pad=${sz.w}:${sz.h}:(ow-iw)/2:(oh-ih)/2:color=${padColor}`,
+        '-c:a', 'copy',
+        outName
+      ]);
+      const data = await ffmpeg.readFile(outName);
+      await ffmpeg.deleteFile(outName);
+      results.push({ size: sz, blob: new Blob([data.buffer], { type: entry.file.type || 'video/mp4' }) });
+    } catch (err){
+      results.push({ size: sz, error: err });
+    }
+  }
+  try { await ffmpeg.deleteFile(inName); } catch(e){}
+  return results;
+}
+
+// ---- Generate & zip ----
+$('generateBtn').addEventListener('click', async () => {
+  const sf = setFields();
+  const sizes = getSelectedSizes();
+  const btn = $('generateBtn');
+  btn.disabled = true;
+  $('genStatus').className = 'status';
+
+  const zip = new JSZip();
+  const manifestRows = [['Original File','Renamed Original','Generated Sizes','Type']];
+  const fallbackCommands = []; // only populated if in-browser video resize fails
+
+  const videoEntries = state.files.filter(e => e.kind === 'video');
+  let videosDone = 0;
+
+  for (const entry of state.files){
+    const origSize = entry.sizeLabel || '1080x1920';
+    const origName = buildFilename(sf, entry, origSize, entry.ext);
+    zip.file(origName, entry.file); // always include the renamed original
+
+    const generatedNames = [];
+    const failedNames = [];
+
+    if (entry.kind === 'image'){
+      if (sizes.length){
+        $('genStatus').textContent = `Resizing image ${entry.file.name}…`;
+        const img = await loadImage(entry.file);
+        for (const sz of sizes){
+          const padName = buildFilename(sf, entry, sz.label, entry.ext);
+          const canvas = padImageToCanvas(img, sz.w, sz.h, sf.padColor);
+          const mime = entry.ext === 'png' ? 'image/png' : 'image/jpeg';
+          const blob = await canvasToBlob(canvas, mime);
+          zip.file(padName, blob);
+          generatedNames.push(padName);
+        }
+      }
+    } else {
+      videosDone++;
+      if (sizes.length){
+        $('genStatus').textContent = `Resizing video ${videosDone} of ${videoEntries.length} (${entry.file.name})…`;
+        try {
+          const results = await padVideoAllSizes(entry, sizes, sf.padColor, msg => $('genStatus').textContent = msg);
+          for (const r of results){
+            const padName = buildFilename(sf, entry, r.size.label, entry.ext);
+            if (r.blob){
+              zip.file(padName, r.blob);
+              generatedNames.push(padName);
+            } else {
+              console.error('Video auto-resize failed for', entry.file.name, r.size.label, r.error);
+              fallbackCommands.push(buildFfmpegCmd(origName, padName, r.size.w, r.size.h, sf.padColor));
+              failedNames.push(padName + ' (FAILED — see fallback command)');
+            }
+          }
+        } catch (err){
+          console.error('Video engine failed entirely for', entry.file.name, err);
+          sizes.forEach(sz => {
+            const padName = buildFilename(sf, entry, sz.label, entry.ext);
+            fallbackCommands.push(buildFfmpegCmd(origName, padName, sz.w, sz.h, sf.padColor));
+            failedNames.push(padName + ' (FAILED — see fallback command)');
+          });
+        }
+      }
+    }
+
+    manifestRows.push([entry.file.name, origName, [...generatedNames, ...failedNames].join(' | ') || '(none selected)', entry.kind]);
+  }
+
+  if (fallbackCommands.length){
+    zip.file('resize_videos.sh', '#!/bin/bash\n' + fallbackCommands.join('\n') + '\n');
+    zip.file('resize_videos.bat', '@echo off\r\n' + fallbackCommands.join('\r\n') + '\r\npause\r\n');
+  }
+  zip.file('manifest.csv', manifestRows.map(r => r.map(c => `"${c}"`).join(',')).join('\n'));
+
+  $('genStatus').textContent = 'Packing zip…';
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `${sf.mmddyy}_${sf.app}_${sf.pkg}_creative_set.zip`;
+  document.body.appendChild(a); a.click(); a.remove();
+
+  btn.disabled = false;
+
+  if (fallbackCommands.length){
+    $('genStatus').textContent = `Done — but ${fallbackCommands.length} video(s) couldn't auto-resize. Fallback commands below.`;
+    $('genStatus').className = 'status err';
+    $('videoOutput').style.display = 'block';
+    $('cmdList').innerHTML = fallbackCommands.map(c => `
+      <div class="cmd-box">
+        <code>${c}</code>
+        <button class="copy-btn" onclick="navigator.clipboard.writeText(\`${c.replace(/`/g,'\\`')}\`)">Copy</button>
+      </div>`).join('');
+  } else {
+    $('genStatus').textContent = 'Done — set downloaded, everything resized automatically.';
+    $('videoOutput').style.display = 'none';
+  }
+});
+
+$('copyAllCmds').addEventListener('click', () => {
+  const cmds = [...document.querySelectorAll('#cmdList code')].map(el => el.textContent);
+  navigator.clipboard.writeText('#!/bin/bash\n' + cmds.join('\n'));
+});
+
+function loadImage(file){
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.src = URL.createObjectURL(file);
+  });
+}
+</script>
+</body>
+</html>
