@@ -101,6 +101,10 @@
   .size-options{ display:flex; flex-direction:column; gap:6px; }
   .size-option{ display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text); cursor:pointer; }
   .size-option input{ width:auto; margin:0; accent-color:var(--accent); cursor:pointer; }
+  .custom-size-input{
+    width:44px !important; padding:3px 5px; font-size:12px; font-family:var(--mono);
+    cursor:text !important; accent-color:initial;
+  }
 
   #videoOutput{ margin-top:26px; display:none; }
   #videoOutput h3{ font-size:13px; margin:0 0 6px; }
@@ -238,14 +242,27 @@
     <fieldset>
       <legend>Resize settings</legend>
       <div class="field">
+        <label class="size-option"><input type="checkbox" id="f-include-original" checked> Include the original size in the output</label>
+        <div class="hint">Uncheck if you only want the resized sizes below, without a copy at the source resolution.</div>
+      </div>
+      <div class="field">
         <label>Output sizes</label>
         <div class="size-options">
           <label class="size-option"><input type="checkbox" class="size-checkbox" value="1080x1350" checked> 1080×1350</label>
           <label class="size-option"><input type="checkbox" class="size-checkbox" value="1080x1080"> 1080×1080</label>
           <label class="size-option"><input type="checkbox" class="size-checkbox" value="1920x1080"> 1920×1080</label>
           <label class="size-option"><input type="checkbox" class="size-checkbox" value="1080x1920"> 1080×1920</label>
+          <label class="size-option"><input type="checkbox" class="size-checkbox" value="1200x1500"> 1200×1500</label>
+          <label class="size-option"><input type="checkbox" class="size-checkbox" value="1200x1200"> 1200×1200</label>
+          <label class="size-option">
+            <input type="checkbox" id="f-custom-size-enabled">
+            Custom:
+            <input type="number" id="f-custom-w" class="custom-size-input" min="1" placeholder="W">
+            <span style="color:var(--muted);">×</span>
+            <input type="number" id="f-custom-h" class="custom-size-input" min="1" placeholder="H">
+          </label>
         </div>
-        <div class="hint">The original size is always included. Pick any additional sizes to generate alongside it.</div>
+        <div class="hint">Pick any additional sizes to generate alongside the original.</div>
       </div>
       <div class="field">
         <label for="f-padcolor">Pad color</label>
@@ -527,10 +544,16 @@ function requiredFieldsOk(sf){
 }
 
 function getSelectedSizes(){
-  return [...document.querySelectorAll('.size-checkbox:checked')].map(cb => {
+  const sizes = [...document.querySelectorAll('.size-checkbox:checked')].map(cb => {
     const [w, h] = cb.value.split('x').map(Number);
     return { label: cb.value, w, h };
   });
+  if ($('f-custom-size-enabled').checked){
+    const w = parseInt($('f-custom-w').value, 10);
+    const h = parseInt($('f-custom-h').value, 10);
+    if (w > 0 && h > 0) sizes.push({ label: `${w}x${h}`, w, h });
+  }
+  return sizes;
 }
 
 function refreshRow(entry){
@@ -541,8 +564,9 @@ function refreshRow(entry){
   const origSize = entry.sizeLabel || '1080x1920';
   const origName = buildFilename(sf, entry, origSize, entry.ext);
   const sizes = getSelectedSizes();
+  const includeOriginal = $('f-include-original').checked;
 
-  let html = '<b>' + origSize + ':</b> ' + origName;
+  let html = includeOriginal ? ('<b>' + origSize + ':</b> ' + origName) : '<span style="color:var(--muted);">Original size not included</span>';
   if (sizes.length){
     sizes.forEach(sz => {
       const name = buildFilename(sf, entry, sz.label, entry.ext);
@@ -572,7 +596,8 @@ function refreshRow(entry){
 function refreshAll(){
   state.files.forEach(refreshRow);
   const sf = setFields();
-  $('generateBtn').disabled = !(requiredFieldsOk(sf) && state.files.length > 0);
+  const hasOutput = $('f-include-original').checked || getSelectedSizes().length > 0;
+  $('generateBtn').disabled = !(requiredFieldsOk(sf) && state.files.length > 0 && hasOutput);
 }
 
 function addFile(file){
@@ -717,7 +742,7 @@ async function getFFmpeg(onProgress){
 }
 
 function buildFfmpegCmd(origName, padName, w, h, padColor){
-  return `ffmpeg -i "${origName}" -vf "scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=${padColor}" -c:a copy "${padName}"`;
+  return `ffmpeg -i "${origName}" -vf "scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=${padColor}" -c:v libx264 -preset ultrafast -crf 23 -c:a copy "${padName}"`;
 }
 
 // Writes the source video once, then renders every selected size from it before cleaning up.
@@ -734,6 +759,9 @@ async function padVideoAllSizes(entry, sizes, padColor, onProgress){
       await ffmpeg.exec([
         '-i', inName,
         '-vf', `scale=${sz.w}:${sz.h}:force_original_aspect_ratio=decrease,pad=${sz.w}:${sz.h}:(ow-iw)/2:(oh-ih)/2:color=${padColor}`,
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-crf', '23',
         '-c:a', 'copy',
         outName
       ]);
@@ -759,6 +787,7 @@ $('generateBtn').addEventListener('click', async () => {
   const zip = new JSZip();
   const manifestRows = [['Original File','Renamed Original','Generated Sizes','Type']];
   const fallbackCommands = []; // only populated if in-browser video resize fails
+  const includeOriginal = $('f-include-original').checked;
 
   const videoEntries = state.files.filter(e => e.kind === 'video');
   let videosDone = 0;
@@ -766,7 +795,7 @@ $('generateBtn').addEventListener('click', async () => {
   for (const entry of state.files){
     const origSize = entry.sizeLabel || '1080x1920';
     const origName = buildFilename(sf, entry, origSize, entry.ext);
-    zip.file(origName, entry.file); // always include the renamed original
+    if (includeOriginal) zip.file(origName, entry.file);
 
     const generatedNames = [];
     const failedNames = [];
@@ -812,7 +841,7 @@ $('generateBtn').addEventListener('click', async () => {
       }
     }
 
-    manifestRows.push([entry.file.name, origName, [...generatedNames, ...failedNames].join(' | ') || '(none selected)', entry.kind]);
+    manifestRows.push([entry.file.name, includeOriginal ? origName : '(original not included)', [...generatedNames, ...failedNames].join(' | ') || '(none selected)', entry.kind]);
   }
 
   if (fallbackCommands.length){
