@@ -101,10 +101,7 @@
   .size-options{ display:flex; flex-direction:column; gap:6px; }
   .size-option{ display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text); cursor:pointer; }
   .size-option input{ width:auto; margin:0; accent-color:var(--accent); cursor:pointer; }
-  .custom-size-input{
-    width:44px !important; padding:3px 5px; font-size:12px; font-family:var(--mono);
-    cursor:text !important; accent-color:initial;
-  }
+  .custom-size-input{ width:44px !important; padding:3px 5px; font-size:12px; font-family:var(--mono); cursor:text !important; }
 
   #videoOutput{ margin-top:26px; display:none; }
   #videoOutput h3{ font-size:13px; margin:0 0 6px; }
@@ -253,22 +250,21 @@
           <label class="size-option"><input type="checkbox" class="size-checkbox" value="1920x1080"> 1920×1080</label>
           <label class="size-option"><input type="checkbox" class="size-checkbox" value="1080x1920"> 1080×1920</label>
           <label class="size-option"><input type="checkbox" class="size-checkbox" value="1200x1500"> 1200×1500</label>
-          <label class="size-option"><input type="checkbox" class="size-checkbox" value="1200x1200"> 1200×1200</label>
-          <label class="size-option">
-            <input type="checkbox" id="f-custom-size-enabled">
-            Custom:
-            <input type="number" id="f-custom-w" class="custom-size-input" min="1" placeholder="W">
+          <label class="size-option" style="align-items:center;">
+            <input type="checkbox" id="f-custom-size-enabled"> Custom:
+            <input type="number" id="f-custom-w" class="custom-size-input" placeholder="W" min="1">
             <span style="color:var(--muted);">×</span>
-            <input type="number" id="f-custom-h" class="custom-size-input" min="1" placeholder="H">
+            <input type="number" id="f-custom-h" class="custom-size-input" placeholder="H" min="1">
           </label>
         </div>
         <div class="hint">Pick any additional sizes to generate alongside the original.</div>
       </div>
       <div class="field">
-        <label for="f-padcolor">Pad color</label>
+        <label for="f-padcolor">Pad style</label>
         <select id="f-padcolor">
           <option value="#000000">Black</option>
           <option value="#FFFFFF">White</option>
+          <option value="blur">Blurred background</option>
         </select>
         <div class="hint">Applies to both the in-browser image resize and the ffmpeg command generated for video.</div>
       </div>
@@ -511,6 +507,16 @@ function toISODate(d){
 }
 $('f-date').value = toISODate(fridayOfWeek(new Date()));
 
+// Video duration always gets tagged to one of the team's standard buckets rather
+// than the raw seconds — e.g. a 12s clip is tagged 15 (it falls between 10 and 15).
+const DURATION_BUCKETS = [6, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60];
+function bucketDuration(rawSeconds){
+  for (const b of DURATION_BUCKETS){
+    if (rawSeconds <= b) return b;
+  }
+  return DURATION_BUCKETS[DURATION_BUCKETS.length - 1]; // clamp anything longer than 60 down to 60
+}
+
 function pad2(n){ n = parseInt(n,10); if (isNaN(n)) n = 0; return n.toString().padStart(2,'0'); }
 function onlyDigits(v){ return (v||'').replace(/\D/g,''); }
 
@@ -621,10 +627,12 @@ function addFile(file){
     v.src = URL.createObjectURL(file);
     v.onloadedmetadata = () => {
       entry.width = v.videoWidth; entry.height = v.videoHeight;
-      entry.duration = Math.round(v.duration);
+      entry.duration = bucketDuration(v.duration);
       entry.sizeLabel = entry.width + 'x' + entry.height;
       const sizeInput = document.querySelector('#row-' + id + ' .size-input');
       if (sizeInput) sizeInput.value = entry.sizeLabel;
+      const durInputEl = document.querySelector('#row-' + id + ' .dur-input');
+      if (durInputEl) durInputEl.value = entry.duration;
       refreshRow(entry);
       refreshAll();
     };
@@ -684,7 +692,16 @@ function renderRow(entry){
     refreshRow(entry);
   });
   const durInput = tr.querySelector('.dur-input');
-  if (durInput) durInput.addEventListener('input', e => { entry.duration = parseInt(e.target.value,10) || 0; refreshRow(entry); });
+  if (durInput){
+    // keep raw typing responsive; snap to the nearest standard bucket once they leave the field
+    durInput.addEventListener('input', e => { entry.duration = parseInt(e.target.value, 10) || 0; refreshRow(entry); });
+    durInput.addEventListener('change', e => {
+      const bucketed = bucketDuration(parseInt(e.target.value, 10) || 0);
+      entry.duration = bucketed;
+      e.target.value = bucketed;
+      refreshRow(entry);
+    });
+  }
   tr.querySelector('.remove-btn').addEventListener('click', () => {
     state.files = state.files.filter(f => f.id !== entry.id);
     tr.remove();
@@ -711,8 +728,21 @@ function padImageToCanvas(img, targetW, targetH, color){
   const canvas = document.createElement('canvas');
   canvas.width = targetW; canvas.height = targetH;
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = color;
-  ctx.fillRect(0,0,targetW,targetH);
+
+  if (color === 'blur'){
+    // Cover-fit, blurred copy as the background. Overscan a bit so the blur's
+    // soft edges land outside the visible canvas instead of showing a light fringe.
+    const coverScale = Math.max(targetW / img.width, targetH / img.height) * 1.15;
+    const bw = img.width * coverScale, bh = img.height * coverScale;
+    const bx = (targetW - bw) / 2, by = (targetH - bh) / 2;
+    ctx.filter = 'blur(24px)';
+    ctx.drawImage(img, bx, by, bw, bh);
+    ctx.filter = 'none';
+  } else {
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, targetW, targetH);
+  }
+
   const scale = Math.min(targetW / img.width, targetH / img.height);
   const w = img.width * scale, h = img.height * scale;
   const x = (targetW - w) / 2, y = (targetH - h) / 2;
@@ -730,19 +760,48 @@ async function getFFmpeg(onProgress){
   if (ffmpegInstance) return ffmpegInstance;
   const { FFmpeg } = await import('./vendor/ffmpeg/index.js');
   const { toBlobURL } = await import('./vendor/util/index.js');
-  if (onProgress) onProgress('Loading video engine (first video only, ~15-30s)…');
   const instance = new FFmpeg();
-  const coreBase = './vendor/core';
-  await instance.load({
+
+  // Multi-threaded core only works when the page is served with the COOP/COEP
+  // headers that enable SharedArrayBuffer (Cloudflare Pages, Netlify — not GitHub
+  // Pages). We detect that at runtime and fall back automatically if it's absent,
+  // so this is safe to ship regardless of where the tool ends up hosted.
+  const useMt = typeof self !== 'undefined' && self.crossOriginIsolated;
+  const coreBase = useMt ? './vendor/core-mt' : './vendor/core';
+  if (onProgress) onProgress(useMt
+    ? 'Loading video engine (multi-core mode, first video only)…'
+    : 'Loading video engine (first video only, ~15-30s)…');
+
+  const loadOpts = {
     coreURL: await toBlobURL(`${coreBase}/ffmpeg-core.js`, 'text/javascript'),
     wasmURL: await toBlobURL(`${coreBase}/ffmpeg-core.wasm`, 'application/wasm')
-  });
+  };
+  if (useMt){
+    loadOpts.workerURL = await toBlobURL(`${coreBase}/ffmpeg-core.worker.js`, 'text/javascript');
+  }
+  await instance.load(loadOpts);
   ffmpegInstance = instance;
   return ffmpegInstance;
 }
 
+// Builds the filter args for a given target size + pad style. Shared by the
+// in-browser exec() path and the copyable fallback command, so both stay in sync.
+function videoFilterArgs(w, h, padColor){
+  if (padColor === 'blur'){
+    return [
+      '-filter_complex',
+      `[0:v]split=2[bg][fg];[bg]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},gblur=sigma=20[bg2];[fg]scale=${w}:${h}:force_original_aspect_ratio=decrease[fg2];[bg2][fg2]overlay=(W-w)/2:(H-h)/2[outv]`,
+      '-map', '[outv]', '-map', '0:a?'
+    ];
+  }
+  return ['-vf', `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=${padColor}`];
+}
+
 function buildFfmpegCmd(origName, padName, w, h, padColor){
-  return `ffmpeg -i "${origName}" -vf "scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=${padColor}" -c:v libx264 -preset ultrafast -crf 23 -c:a copy "${padName}"`;
+  const filterStr = videoFilterArgs(w, h, padColor)
+    .map(a => (a.startsWith('-') ? a : `"${a}"`))
+    .join(' ');
+  return `ffmpeg -i "${origName}" ${filterStr} -c:v libx264 -preset ultrafast -crf 23 -c:a copy "${padName}"`;
 }
 
 // Writes the source video once, then renders every selected size from it before cleaning up.
@@ -758,7 +817,7 @@ async function padVideoAllSizes(entry, sizes, padColor, onProgress){
     try {
       await ffmpeg.exec([
         '-i', inName,
-        '-vf', `scale=${sz.w}:${sz.h}:force_original_aspect_ratio=decrease,pad=${sz.w}:${sz.h}:(ow-iw)/2:(oh-ih)/2:color=${padColor}`,
+        ...videoFilterArgs(sz.w, sz.h, padColor),
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
         '-crf', '23',
