@@ -188,16 +188,21 @@
           <input type="text" id="f-pkg" placeholder="e.g. 318">
         </div>
       </div>
+      <div class="field">
+        <label for="f-variant-letter">Variation letter</label>
+        <input type="text" id="f-variant-letter" maxlength="1" value="A">
+        <div class="hint">Set once — applies to every file in this set. Only the number after it changes per file.</div>
+      </div>
       <div class="row2">
         <div class="field">
           <label for="f-concept">Concept ID (H##)</label>
-          <input type="text" id="f-concept" placeholder="e.g. 5">
-          <button type="button" class="glossary-link" id="conceptGlossaryLink">See concept IDs for this app</button>
+          <select id="f-concept"><option value="">Select an app first…</option></select>
+          <button type="button" class="glossary-link" id="conceptGlossaryLink">See all concept IDs for this app</button>
         </div>
         <div class="field">
           <label for="f-feature">Feature ID (F##)</label>
-          <input type="text" id="f-feature" placeholder="e.g. 7">
-          <button type="button" class="glossary-link" id="featureGlossaryLink">See feature IDs for this app</button>
+          <select id="f-feature"><option value="">Select an app first…</option></select>
+          <button type="button" class="glossary-link" id="featureGlossaryLink">See all feature IDs for this app</button>
         </div>
       </div>
     </fieldset>
@@ -223,7 +228,7 @@
       <div class="row2">
         <div class="field">
           <label for="f-producer">Creative producer (initials)</label>
-          <input type="text" id="f-producer" maxlength="3" placeholder="e.g. RP">
+          <input type="text" id="f-producer" maxlength="3" placeholder="Auto-fills from App ID">
         </div>
         <div class="field">
           <label for="f-designer">Designer (initials)</label>
@@ -420,9 +425,10 @@ async function loadGlossaryData(){
   }
   const list = $('app-list');
   if (list) list.innerHTML = APPS.map(a => `<option value="${a.id}">`).join('');
+  if (typeof refreshConceptFeatureDropdowns === 'function') refreshConceptFeatureDropdowns();
 }
 
-const state = { files: [] }; // {id, file, kind, ext, width, height, letter, iter, mediaType, duration, thumbURL}
+const state = { files: [] }; // {id, file, kind, ext, width, height, iter, mediaType, duration, thumbURL}
 let nextId = 1;
 
 const $ = (id) => document.getElementById(id);
@@ -460,6 +466,38 @@ function renderGlossaryAll(){
   renderGlossaryTables($('glossary-app-select').value);
   renderGlossaryStatic();
 }
+
+// Concept ID / Feature ID dropdowns refresh to match whichever app is currently selected.
+function refreshConceptFeatureDropdowns(){
+  const appId = ($('f-app').value || '').trim().toUpperCase();
+  const prevConcept = $('f-concept').value;
+  const prevFeature = $('f-feature').value;
+
+  const universal = CONCEPT_IDS['ALL'] || [['H01', 'Wild Ideas (always available for any app)']];
+  const conceptRows = universal.concat(CONCEPT_IDS[appId] || []);
+  const featureRows = FEATURE_IDS[appId] || [];
+
+  $('f-concept').innerHTML = '<option value="">Select…</option>' +
+    conceptRows.map(([id, desc]) => `<option value="${id}">${id} — ${desc}</option>`).join('');
+  $('f-feature').innerHTML = featureRows.length
+    ? '<option value="">Select…</option>' + featureRows.map(([id, desc]) => `<option value="${id}">${id} — ${desc}</option>`).join('')
+    : '<option value="">No feature IDs listed for this app yet — add one in the glossary sheet</option>';
+
+  // Keep the previous pick if it's still a valid option (e.g. the sheet refreshed but the app didn't change).
+  if ([...$('f-concept').options].some(o => o.value === prevConcept)) $('f-concept').value = prevConcept;
+  if ([...$('f-feature').options].some(o => o.value === prevFeature)) $('f-feature').value = prevFeature;
+}
+
+// Creative producer defaults off the app selected — SR for these apps, AB for everything else.
+// Still a plain text field afterward, so it can always be typed over.
+const SR_APPS = ['BL', 'VCL', 'BNL', 'NWL', 'FMP', 'ACL', 'WRL']; // Bible, Volume Control, News (both), Find My Phone, AI Chat, Weather
+function applyAppDefaults(){
+  const appId = ($('f-app').value || '').trim().toUpperCase();
+  if (appId) $('f-producer').value = SR_APPS.includes(appId) ? 'SR' : 'AB';
+  refreshConceptFeatureDropdowns();
+  refreshAll();
+}
+$('f-app').addEventListener('input', applyAppDefaults);
 
 async function openGlossary(){
   $('glossaryModal').style.display = 'flex';
@@ -526,8 +564,9 @@ function setFields(){
     mmddyy: (m||'01') + (d||'01') + (y||'2026').slice(2),
     app: ($('f-app').value||'').trim().toUpperCase().replace(/\s+/g,''),
     pkg: 'C' + onlyDigits($('f-pkg').value || '0'),
-    concept: 'H' + pad2(onlyDigits($('f-concept').value)),
-    feature: 'F' + pad2(onlyDigits($('f-feature').value)),
+    variantLetter: ($('f-variant-letter').value || 'A').trim().toUpperCase().slice(0,1) || 'A',
+    concept: $('f-concept').value ? 'H' + pad2(onlyDigits($('f-concept').value)) : '',
+    feature: $('f-feature').value ? 'F' + pad2(onlyDigits($('f-feature').value)) : '',
     lang: $('f-lang').value,
     ai: $('f-ai').value,
     producer: ($('f-producer').value||'').trim().toUpperCase(),
@@ -538,15 +577,28 @@ function setFields(){
 }
 
 function buildFilename(sf, entry, adSize, ext){
-  const variant = entry.letter.toUpperCase() + entry.iter;
+  const variant = sf.variantLetter + entry.iter;
   const mediaCode = entry.mediaType === 'S' ? 'S' : ('V' + pad2(entry.duration));
   let parts = [sf.mmddyy, sf.app, sf.pkg, variant, sf.concept, sf.feature, adSize, mediaCode, sf.lang, sf.ai, sf.producer, sf.designer];
   if (sf.extra) parts.push(sf.extra);
   return parts.join('_') + '.' + ext;
 }
 
-function requiredFieldsOk(sf){
-  return sf.app && sf.producer && sf.designer && $('f-pkg').value;
+// Every field here is required except Output sizes (checked separately) and the
+// explicitly-optional Extra code — this is what "nothing gets skipped" enforces.
+function getMissingFields(sf){
+  const missing = [];
+  if (!$('f-date').value) missing.push('Export date');
+  if (!sf.app) missing.push('App ID');
+  if (!$('f-pkg').value) missing.push('Creative package #');
+  if (!sf.variantLetter) missing.push('Variation letter');
+  if (!$('f-concept').value) missing.push('Concept ID');
+  if (!$('f-feature').value) missing.push('Feature ID');
+  if (!sf.lang) missing.push('Language');
+  if (!sf.ai) missing.push('AI / Non-AI');
+  if (!sf.producer) missing.push('Creative producer');
+  if (!sf.designer) missing.push('Designer');
+  return missing;
 }
 
 function getSelectedSizes(){
@@ -603,7 +655,26 @@ function refreshAll(){
   state.files.forEach(refreshRow);
   const sf = setFields();
   const hasOutput = $('f-include-original').checked || getSelectedSizes().length > 0;
-  $('generateBtn').disabled = !(requiredFieldsOk(sf) && state.files.length > 0 && hasOutput);
+  const missing = getMissingFields(sf);
+  const statusEl = $('genStatus');
+
+  if (state.files.length === 0){
+    $('generateBtn').disabled = true;
+    statusEl.textContent = '';
+    statusEl.className = 'status';
+  } else if (!hasOutput){
+    $('generateBtn').disabled = true;
+    statusEl.textContent = 'Select at least one output — check "Include the original size" or an output size.';
+    statusEl.className = 'status err';
+  } else if (missing.length){
+    $('generateBtn').disabled = true;
+    statusEl.textContent = 'Still needed: ' + missing.join(', ');
+    statusEl.className = 'status err';
+  } else {
+    $('generateBtn').disabled = false;
+    statusEl.textContent = '';
+    statusEl.className = 'status';
+  }
 }
 
 function addFile(file){
@@ -614,7 +685,7 @@ function addFile(file){
     id, file, kind: isVideo ? 'video' : 'image', ext,
     width: 0, height: 0,
     sizeLabel: '1080x1920', // editable — assumed until/unless the person overrides or detection updates it
-    letter: 'A', iter: state.files.length + 1,
+    iter: state.files.length + 1,
     mediaType: isVideo ? 'V' : 'S', duration: 0,
     thumbURL: null
   };
@@ -675,7 +746,6 @@ function renderRow(entry){
     </td>
     <td>
       <div class="var-pair">
-        <input class="tiny-input letter-input" value="${entry.letter}" maxlength="1">
         <input class="tiny-input iter-input" type="number" min="1" value="${entry.iter}">
       </div>
       ${entry.kind === 'video' ? '<div class="hint" style="margin-top:6px;">dur (s): <input class="tiny-input dur-input" type="number" min="1" style="width:52px;" value="0"></div>' : ''}
@@ -685,7 +755,6 @@ function renderRow(entry){
     <td><button class="remove-btn" title="Remove">✕</button></td>
   `;
 
-  tr.querySelector('.letter-input').addEventListener('input', e => { entry.letter = e.target.value.toUpperCase() || 'A'; refreshRow(entry); });
   tr.querySelector('.iter-input').addEventListener('input', e => { entry.iter = e.target.value || '1'; refreshRow(entry); });
   tr.querySelector('.size-input').addEventListener('input', e => {
     entry.sizeLabel = e.target.value.trim().replace(/X/gi, 'x');
