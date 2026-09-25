@@ -415,7 +415,7 @@
         <li><b>Language &amp; sourcing</b> — language, AI/Non-AI/Hybrid, producer and designer initials. Producer auto-fills but is always editable.</li>
         <li><b>Resize settings</b> — tick every output size you need (1080×1350, 1080×1080, 1920×1080, 1080×1920, 1200×1500, or a custom size). Uncheck "Include the original size" if you only want resized versions. Pick a pad style — Black, White, or Blurred background — for whatever space is added around a resized frame.</li>
         <li><b>Drop your files</b> — drag every variant for this set into the drop zone, or click it to browse. Images and videos can be mixed freely.</li>
-        <li><b>Check each row</b> — the tool detects each file's size and (for video) duration automatically. Fix the iteration number if needed, and turn on <b>AI disclaimer</b> per file if that creative needs the compliance overlay (videos let you set how many seconds it stays on screen — leave blank to show it throughout).</li>
+        <li><b>Check each row</b> — the tool detects each file's size and (for video) duration automatically. Fix the iteration number if needed.</li>
         <li><b>Generate &amp; download</b> — click the button once every field is filled in (the status line tells you if anything's missing). You'll get one zip with every renamed, resized file plus a manifest.csv listing what was produced.</li>
       </ol>
 
@@ -716,10 +716,6 @@ function refreshRow(entry){
   const includeOriginal = $('f-include-original').checked;
 
   let html = includeOriginal ? ('<b>' + origSize + ':</b> ' + origName) : '<span style="color:var(--muted);">Original size not included</span>';
-  if (entry.disclaimer){
-    const durNote = entry.disclaimerDuration ? `for ${entry.disclaimerDuration}s` : 'throughout';
-    html += ` <span style="color:var(--accent);">+ AI disclaimer (${durNote})</span>`;
-  }
   if (sizes.length){
     sizes.forEach(sz => {
       const name = buildFilename(sf, entry, sz.label, entry.ext);
@@ -782,7 +778,6 @@ function addFile(file){
     sizeLabel: '1080x1920', // editable — assumed until/unless the person overrides or detection updates it
     iter: state.files.length + 1,
     mediaType: isVideo ? 'V' : 'S', duration: 0,
-    disclaimer: false, disclaimerDuration: null, // null = visible throughout
     thumbURL: null
   };
   state.files.push(entry);
@@ -845,10 +840,6 @@ function renderRow(entry){
         <input class="tiny-input iter-input" type="number" min="1" value="${entry.iter}">
       </div>
       ${entry.kind === 'video' ? '<div class="hint" style="margin-top:6px;">dur (s): <input class="tiny-input dur-input" type="number" min="1" style="width:52px;" value="0"></div>' : ''}
-      <label class="size-option" style="margin-top:8px; font-size:12px;">
-        <input type="checkbox" class="disclaimer-toggle"> AI disclaimer
-      </label>
-      ${entry.kind === 'video' ? '<div class="hint disclaimer-duration-wrap" style="margin-top:4px; display:none;">for (s): <input class="tiny-input disclaimer-duration-input" type="number" min="1" style="width:52px;" placeholder="full"></div>' : ''}
     </td>
     <td><span class="badge ${entry.kind === 'video' ? 'video' : 'static'}">${entry.kind === 'video' ? 'VIDEO' : 'STATIC'}</span></td>
     <td><div class="preview">…</div></td>
@@ -868,20 +859,6 @@ function renderRow(entry){
       const bucketed = bucketDuration(parseInt(e.target.value, 10) || 0);
       entry.duration = bucketed;
       e.target.value = bucketed;
-      refreshRow(entry);
-    });
-  }
-  tr.querySelector('.disclaimer-toggle').addEventListener('change', e => {
-    entry.disclaimer = e.target.checked;
-    const wrap = tr.querySelector('.disclaimer-duration-wrap');
-    if (wrap) wrap.style.display = e.target.checked ? 'block' : 'none';
-    refreshRow(entry);
-  });
-  const discDurInput = tr.querySelector('.disclaimer-duration-input');
-  if (discDurInput){
-    discDurInput.addEventListener('input', e => {
-      const v = parseInt(e.target.value, 10);
-      entry.disclaimerDuration = (v > 0) ? v : null;
       refreshRow(entry);
     });
   }
@@ -907,98 +884,6 @@ $('fileInput').addEventListener('change', e => { [...e.target.files].forEach(add
 document.querySelectorAll('.set-panel input, .set-panel select').forEach(el => el.addEventListener('input', refreshAll));
 
 // ---- Image padding via canvas ----
-// ---- AI disclaimer overlay (burned into the ORIGINAL creative only; resizes inherit it automatically) ----
-const DISCLAIMER_TEXT = 'Contains AI-generated imagery for illustrative purposes. Actual results may vary.';
-const DISCLAIMER_FONT_SIZE = 24;
-const DISCLAIMER_BOTTOM_MARGIN_PCT = 0.06;
-const DISCLAIMER_LINE_HEIGHT = DISCLAIMER_FONT_SIZE * 1.35;
-const DISCLAIMER_FONT_FAMILY = 'AtomDisclaimerRoboto';
-const DISCLAIMER_FONT_PATH = './vendor/fonts/Roboto-Regular.ttf';
-
-const robotoFontReady = (async () => {
-  try {
-    const face = new FontFace(DISCLAIMER_FONT_FAMILY, `url(${DISCLAIMER_FONT_PATH})`);
-    await face.load();
-    document.fonts.add(face);
-    return true;
-  } catch (err){
-    console.error('Roboto font failed to load for the disclaimer overlay:', err);
-    return false;
-  }
-})();
-
-function wrapDisclaimerText(ctx, text, maxWidthPx){
-  const words = text.split(' ');
-  const lines = [];
-  let current = '';
-  words.forEach(word => {
-    const test = current ? current + ' ' + word : word;
-    if (current && ctx.measureText(test).width > maxWidthPx){
-      lines.push(current);
-      current = word;
-    } else {
-      current = test;
-    }
-  });
-  if (current) lines.push(current);
-  return lines;
-}
-
-// Single source of truth for line-breaking, shared by both the canvas (image) and
-// ffmpeg drawtext (video) paths so they wrap the text identically.
-async function getDisclaimerLines(frameWidth){
-  await robotoFontReady;
-  const ctx = document.createElement('canvas').getContext('2d');
-  ctx.font = `${DISCLAIMER_FONT_SIZE}px "${DISCLAIMER_FONT_FAMILY}", Roboto, sans-serif`;
-  return wrapDisclaimerText(ctx, DISCLAIMER_TEXT, frameWidth * 0.9);
-}
-
-async function drawDisclaimerOnImage(sourceImg, srcW, srcH){
-  await robotoFontReady;
-  const canvas = document.createElement('canvas');
-  canvas.width = srcW; canvas.height = srcH;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(sourceImg, 0, 0, srcW, srcH);
-
-  ctx.font = `${DISCLAIMER_FONT_SIZE}px "${DISCLAIMER_FONT_FAMILY}", Roboto, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'alphabetic';
-  ctx.fillStyle = '#FFFFFF';
-  ctx.shadowColor = 'rgba(0,0,0,0.55)';
-  ctx.shadowBlur = 4;
-  ctx.shadowOffsetY = 1;
-
-  const lines = wrapDisclaimerText(ctx, DISCLAIMER_TEXT, srcW * 0.9);
-  const bottomMargin = srcH * DISCLAIMER_BOTTOM_MARGIN_PCT;
-  const lastBaseline = srcH - bottomMargin;
-  const firstBaseline = lastBaseline - (lines.length - 1) * DISCLAIMER_LINE_HEIGHT;
-
-  lines.forEach((line, i) => ctx.fillText(line, srcW / 2, firstBaseline + i * DISCLAIMER_LINE_HEIGHT));
-  return canvas;
-}
-
-function escapeDrawtextText(str){
-  return str.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'").replace(/%/g, '\\%');
-}
-
-// Each wrapped line becomes its own chained drawtext filter so ffmpeg can center
-// each line independently via its own text_w — no manual width math needed.
-function buildDisclaimerDrawtext(lines, videoH, durationSeconds){
-  const blockHeight = lines.length * DISCLAIMER_LINE_HEIGHT;
-  const bottomMarginPx = Math.round(videoH * DISCLAIMER_BOTTOM_MARGIN_PCT);
-  const topY = videoH - bottomMarginPx - blockHeight;
-  const enableExpr = durationSeconds ? `:enable='lte(t\\,${durationSeconds})'` : '';
-  return lines.map((line, i) => {
-    const y = Math.round(topY + i * DISCLAIMER_LINE_HEIGHT);
-    return `drawtext=fontfile=Roboto-Regular.ttf:text='${escapeDrawtextText(line)}':fontsize=${DISCLAIMER_FONT_SIZE}:fontcolor=white:x=(w-text_w)/2:y=${y}:shadowcolor=black@0.55:shadowx=0:shadowy=1${enableExpr}`;
-  }).join(',');
-}
-
-function buildDisclaimerFfmpegCmd(origName, discName, lines, videoH, durationSeconds){
-  const filterStr = buildDisclaimerDrawtext(lines, videoH, durationSeconds);
-  return `ffmpeg -i "${origName}" -vf "${filterStr}" -c:v libx264 -preset ultrafast -crf 23 -c:a copy "${discName}"`;
-}
-
 function padImageToCanvas(img, targetW, targetH, color){
   const canvas = document.createElement('canvas');
   canvas.width = targetW; canvas.height = targetH;
@@ -1034,7 +919,7 @@ let ffmpegInstance = null;
 async function getFFmpeg(onProgress){
   if (ffmpegInstance) return ffmpegInstance;
   const { FFmpeg } = await import('./vendor/ffmpeg/index.js');
-  const { toBlobURL, fetchFile } = await import('./vendor/util/index.js');
+  const { toBlobURL } = await import('./vendor/util/index.js');
   const instance = new FFmpeg();
 
   // Multi-threaded core only works when the page is served with the COOP/COEP
@@ -1055,7 +940,6 @@ async function getFFmpeg(onProgress){
     loadOpts.workerURL = await toBlobURL(`${coreBase}/ffmpeg-core.worker.js`, 'text/javascript');
   }
   await instance.load(loadOpts);
-  await instance.writeFile('Roboto-Regular.ttf', await fetchFile(DISCLAIMER_FONT_PATH));
   ffmpegInstance = instance;
   return ffmpegInstance;
 }
@@ -1080,34 +964,19 @@ function buildFfmpegCmd(origName, padName, w, h, padColor){
   return `ffmpeg -i "${origName}" ${filterStr} -c:v libx264 -preset ultrafast -crf 23 -c:a copy "${padName}"`;
 }
 
-// Writes the source video once, optionally burns the AI disclaimer into it first,
-// then renders every selected size from whichever version is now the source.
-async function padVideoAllSizes(entry, sizes, padColor, disclaimerOpts, onProgress){
+// Writes the source video once, then renders every selected size from it.
+async function padVideoAllSizes(entry, sizes, padColor, onProgress){
   const { fetchFile } = await import('./vendor/util/index.js');
   const ffmpeg = await getFFmpeg(onProgress);
   const inName = 'in_' + entry.id + '.' + entry.ext;
   await ffmpeg.writeFile(inName, await fetchFile(entry.file));
-
-  let sourceName = inName;
-  let disclaimeredBlob = null;
-
-  if (disclaimerOpts && disclaimerOpts.enabled){
-    if (onProgress) onProgress(`Adding AI disclaimer to ${entry.file.name}…`);
-    const lines = await getDisclaimerLines(entry.width || 1080);
-    const filterStr = buildDisclaimerDrawtext(lines, entry.height || 1920, disclaimerOpts.durationSeconds);
-    const discName = 'disc_' + entry.id + '.' + entry.ext;
-    await ffmpeg.exec(['-i', inName, '-vf', filterStr, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-c:a', 'copy', discName]);
-    sourceName = discName;
-    const data = await ffmpeg.readFile(discName);
-    disclaimeredBlob = new Blob([data.buffer], { type: entry.file.type || 'video/mp4' });
-  }
 
   const results = [];
   for (const sz of sizes){
     const outName = 'out_' + entry.id + '_' + sz.w + 'x' + sz.h + '.' + entry.ext;
     try {
       await ffmpeg.exec([
-        '-i', sourceName,
+        '-i', inName,
         ...videoFilterArgs(sz.w, sz.h, padColor),
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
@@ -1123,8 +992,7 @@ async function padVideoAllSizes(entry, sizes, padColor, disclaimerOpts, onProgre
     }
   }
   try { await ffmpeg.deleteFile(inName); } catch(e){}
-  if (sourceName !== inName) try { await ffmpeg.deleteFile(sourceName); } catch(e){}
-  return { results, disclaimeredBlob };
+  return results;
 }
 
 // ---- Generate & zip ----
@@ -1146,11 +1014,10 @@ $('generateBtn').addEventListener('click', async () => {
   for (const entry of state.files){
     const origSize = entry.sizeLabel || '1080x1920';
     const origName = buildFilename(sf, entry, origSize, entry.ext);
-    const needsProcessing = sizes.length > 0 || (entry.disclaimer && includeOriginal);
+    const needsProcessing = sizes.length > 0;
 
     const generatedNames = [];
     const failedNames = [];
-    let disclaimerNote = '';
 
     if (!needsProcessing){
       if (includeOriginal) zip.file(origName, entry.file);
@@ -1158,23 +1025,12 @@ $('generateBtn').addEventListener('click', async () => {
     } else if (entry.kind === 'image'){
       $('genStatus').textContent = `Processing image ${entry.file.name}…`;
       const img = await loadImage(entry.file);
-      let sourceForResize = img;
 
-      if (entry.disclaimer){
-        const disclaimeredCanvas = await drawDisclaimerOnImage(img, entry.width || img.naturalWidth, entry.height || img.naturalHeight);
-        sourceForResize = disclaimeredCanvas;
-        if (includeOriginal){
-          const mimeOrig = entry.ext === 'png' ? 'image/png' : 'image/jpeg';
-          zip.file(origName, await canvasToBlob(disclaimeredCanvas, mimeOrig));
-          disclaimerNote = ' (+disclaimer)';
-        }
-      } else if (includeOriginal){
-        zip.file(origName, entry.file);
-      }
+      if (includeOriginal) zip.file(origName, entry.file);
 
       for (const sz of sizes){
         const padName = buildFilename(sf, entry, sz.label, entry.ext);
-        const canvas = padImageToCanvas(sourceForResize, sz.w, sz.h, sf.padColor);
+        const canvas = padImageToCanvas(img, sz.w, sz.h, sf.padColor);
         const mime = entry.ext === 'png' ? 'image/png' : 'image/jpeg';
         const blob = await canvasToBlob(canvas, mime);
         zip.file(padName, blob);
@@ -1184,21 +1040,12 @@ $('generateBtn').addEventListener('click', async () => {
     } else {
       videosDone++;
       $('genStatus').textContent = `Processing video ${videosDone} of ${videoEntries.length} (${entry.file.name})…`;
-      const disclaimerOpts = entry.disclaimer ? { enabled: true, durationSeconds: entry.disclaimerDuration } : null;
 
       try {
-        const { results, disclaimeredBlob } = await padVideoAllSizes(entry, sizes, sf.padColor, disclaimerOpts, msg => $('genStatus').textContent = msg);
+        const results = await padVideoAllSizes(entry, sizes, sf.padColor, msg => $('genStatus').textContent = msg);
 
-        if (includeOriginal){
-          if (disclaimerOpts && disclaimeredBlob){
-            zip.file(origName, disclaimeredBlob);
-            disclaimerNote = ' (+disclaimer)';
-          } else {
-            zip.file(origName, entry.file);
-          }
-        }
+        if (includeOriginal) zip.file(origName, entry.file);
 
-        const fallbackSource = (disclaimerOpts && disclaimeredBlob) ? ('DISCLAIMERED_' + origName) : origName;
         for (const r of results){
           const padName = buildFilename(sf, entry, r.size.label, entry.ext);
           if (r.blob){
@@ -1206,37 +1053,23 @@ $('generateBtn').addEventListener('click', async () => {
             generatedNames.push(padName);
           } else {
             console.error('Video auto-resize failed for', entry.file.name, r.size.label, r.error);
-            fallbackCommands.push(buildFfmpegCmd(fallbackSource, padName, r.size.w, r.size.h, sf.padColor));
+            fallbackCommands.push(buildFfmpegCmd(origName, padName, r.size.w, r.size.h, sf.padColor));
             failedNames.push(padName + ' (FAILED — see fallback command)');
           }
-        }
-        if (disclaimerOpts && disclaimeredBlob && results.some(r => !r.blob)){
-          zip.file('DISCLAIMERED_' + origName, disclaimeredBlob); // so the fallback commands above have something to read from
         }
 
       } catch (err){
         console.error('Video engine failed for', entry.file.name, err);
-        if (includeOriginal) zip.file(origName, entry.file); // couldn't even burn the disclaimer — ship the plain original rather than nothing
-        if (disclaimerOpts){
-          const discName = 'DISCLAIMERED_' + origName;
-          const lines = await getDisclaimerLines(entry.width || 1080);
-          fallbackCommands.push(buildDisclaimerFfmpegCmd(origName, discName, lines, entry.height || 1920, disclaimerOpts.durationSeconds));
-          sizes.forEach(sz => {
-            const padName = buildFilename(sf, entry, sz.label, entry.ext);
-            fallbackCommands.push(buildFfmpegCmd(discName, padName, sz.w, sz.h, sf.padColor));
-            failedNames.push(padName + ' (FAILED — see fallback command)');
-          });
-        } else {
-          sizes.forEach(sz => {
-            const padName = buildFilename(sf, entry, sz.label, entry.ext);
-            fallbackCommands.push(buildFfmpegCmd(origName, padName, sz.w, sz.h, sf.padColor));
-            failedNames.push(padName + ' (FAILED — see fallback command)');
-          });
-        }
+        if (includeOriginal) zip.file(origName, entry.file);
+        sizes.forEach(sz => {
+          const padName = buildFilename(sf, entry, sz.label, entry.ext);
+          fallbackCommands.push(buildFfmpegCmd(origName, padName, sz.w, sz.h, sf.padColor));
+          failedNames.push(padName + ' (FAILED — see fallback command)');
+        });
       }
     }
 
-    manifestRows.push([entry.file.name, includeOriginal ? (origName + disclaimerNote) : '(original not included)', [...generatedNames, ...failedNames].join(' | ') || '(none selected)', entry.kind]);
+    manifestRows.push([entry.file.name, includeOriginal ? origName : '(original not included)', [...generatedNames, ...failedNames].join(' | ') || '(none selected)', entry.kind]);
   }
 
   if (fallbackCommands.length){
@@ -1288,7 +1121,7 @@ const TOUR_STEPS = [
   { selector: '#tour-set-details', title: 'Start with Set details', body: 'Type the App ID first — it auto-fills the Creative producer and refreshes the Concept ID / Feature ID dropdowns below to match that app. Set the Variation letter once; it applies to every file in this set.' },
   { selector: '#tour-lang-sourcing', title: 'Language & sourcing', body: 'Language, AI / Non-AI / Hybrid, and initials for the producer and designer. Producer auto-fills based on the app, but you can always type over it.' },
   { selector: '#tour-resize-settings', title: 'Choose your output sizes', body: 'Tick every size this set needs. Uncheck "Include the original size" if you only want resized versions. Pick a pad style — Black, White, or Blurred background — for the space added around a resized frame.' },
-  { selector: '#dropzone', title: 'Drop in every variant', body: "Drag your images and videos here, or click to browse. Mix formats freely — each file becomes its own row below with its own controls, including detected size, iteration number, and an optional AI disclaimer overlay." },
+  { selector: '#dropzone', title: 'Drop in every variant', body: "Drag your images and videos here, or click to browse. Mix formats freely — each file becomes its own row below with its own controls, including detected size and iteration number." },
   { selector: '#generateBtn', title: 'Generate & download', body: "Once every required field is filled in, click here. You get one zip with every renamed, resized file plus a manifest.csv — and if a video's codec trips up the browser, a ready-to-run ffmpeg command for just that file." },
   { selector: '#openGlossary', title: 'Look up any code, anytime', body: "Not sure what a Concept ID or Feature ID means? Click Glossary — it's pulled live from the team's naming-convention sheet, so it's always current." }
 ];
